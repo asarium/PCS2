@@ -1,3 +1,7 @@
 [submodule "cmake/external/cmake-modules"]
 	path = cmake/external/cmake-modules
 	url = https://github.com/rpavlik/cmake-modules.git
+
+[submodule "lib/imageloader"]
+	path = lib/imageloader
+	url = https://github.com/asarium/imageloader.git

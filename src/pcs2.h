@@ -227,6 +227,8 @@
 #include <wx/filename.h>
 #include <wx/docview.h>
 
+#include <imageloader.h>
+
 #include "wxPCSPref.h"
 #include "pcs_file.h"
 #include "tex_ctrl.h"
@@ -281,6 +283,8 @@ class PCS2_MainWindow;
 class PCS2_App : public wxApp
 {
 	PCS2_MainWindow *myframe;
+
+	ImgloadContext  m_imgload_ctx;
 	//makeing it the derived class allows us to use any public functions 
 	//of the derived class, and has no drawback that I can see.
 
@@ -291,6 +295,7 @@ class PCS2_App : public wxApp
 
 		PCS2_MainWindow*get_main_window(){return myframe;};
 
+		ImgloadContext get_imgload_context() { return m_imgload_ctx; }
 };
 
 DECLARE_APP(PCS2_App)

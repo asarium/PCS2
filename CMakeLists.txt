@@ -15,4 +15,6 @@ project(PCS2)
 include(toolchain)
 include(platforms)
 
+add_subdirectory(lib)
+
 add_subdirectory(src)

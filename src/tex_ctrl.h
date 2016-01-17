@@ -111,7 +111,7 @@ struct tc_multitex
 	tc_multitex() : texture(0xFFFFFFFF), shine(0xFFFFFFFF), glow(0xFFFFFFFF) {}
 };
 
-//#define _ENABLE_TEXTUREPATH_DEBUG_
+#define _ENABLE_TEXTUREPATH_DEBUG_
 class TextureControl
 {
 	private:
@@ -122,7 +122,7 @@ class TextureControl
 		size_t SearchVPs(const FileList &vp_list, std::string directory, std::string &filename, size_t &size, boost::scoped_array<char> &buffer, std::string &rfname, size_t &curvp, size_t searchpos=0);
 		int SearchAVP(std::string &vp, std::string &filename, size_t &size, boost::scoped_array<char> &buffer, std::string &rfname, size_t searchpos=0);
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 		GLuint LoadTexture(std::string texname,
 										   std::string &rfname, //real file name
 										   const std::vector<std::string> &paths, 

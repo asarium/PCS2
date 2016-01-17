@@ -143,50 +143,164 @@
 #include "tex_ctrl.h"
 #include "FileList.h"
 #include "VPReader.h"
-#include <IL/il.h>
-#include <IL/ilu.h>
-#include <IL/ilut.h>
 #include <fstream>
+#include <imageloader.h>
 #include "pcs2.h"
 #include "main_panel.h"
 #include "insignia.png.h"
 
+#include "GLee.h"
+
 using namespace std;
 
-bool load(ILenum type, const void*buf, int zero){
-#ifdef WIN32
-__try{
-#else
-try{
-#endif
-			return ilLoadL(type, buf, zero) == IL_TRUE;
-#ifdef WIN32
-}__except(true){
-	return false;
-}
-#else
-}catch (int) {
-	return false;
-}
-#endif
-}
-//same as above exept for files
-bool load_image(const char*name){
-#ifdef WIN32
-__try{
-#else
-try{
-#endif
-			return ilLoadImage((const ILstring)name) == IL_TRUE;
-#ifdef WIN32
-}__except(true){
-	return false;
-}
-#else
-}catch (int) {
-	return false;
-}
-#endif
+namespace
+{
+	struct MemoryIO
+	{
+		const void* data;
+		size_t size;
+
+		size_t index;
+	};
+
+	size_t IMGLOAD_CALLBACK mem_read(void* ud, uint8_t* buf, size_t size)
+	{
+		MemoryIO* mem = (MemoryIO*)ud;
+
+		size_t remaining = mem->size - mem->index;
+		uint8_t* current = (uint8_t*)mem->data + mem->index;
+
+		// Determine the amount of stuff we can read
+		size_t read_num = std::min(remaining, size);
+
+		memcpy(buf, current, read_num);
+
+		return read_num;
+	}
+	int64_t IMGLOAD_CALLBACK mem_seek(void* ud, int64_t offset, int whence)
+	{
+		MemoryIO* mem = (MemoryIO*)ud;
+		switch(whence)
+		{
+			case SEEK_SET:
+				mem->index = (size_t) offset;
+				break;
+			case SEEK_CUR:
+				mem->index += offset;
+				break;
+			case SEEK_END:
+				mem->index = mem->size + offset - 1;
+				break;
+			default:
+				return 0;
+		}
+
+		return (int64_t)mem->index;
+	}
+
+	bool load_from_io(ImgloadImage* img, ImgloadIO* io, void* ud)
+	{
+		ImgloadContext ctx = ((PCS2_App*) wxApp::GetInstance())->get_imgload_context();
+
+		*img = nullptr;
+		auto err = imgload_image_init(ctx, img, io, ud);
+
+		if (err != IMGLOAD_ERR_NO_ERROR)
+		{
+			return false;
+		}
+
+		err = imgload_image_read_data(*img);
+
+		if (err != IMGLOAD_ERR_NO_ERROR)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	bool load(ImgloadImage* img, const void* buf, size_t size)
+	{
+		MemoryIO mem;
+		mem.data = buf;
+		mem.size = size;
+
+		mem.index = 0;
+
+		ImgloadIO io;
+		io.read = mem_read;
+		io.seek = mem_seek;
+
+		return load_from_io(img, &io, &mem);
+	}
+
+	size_t IMGLOAD_CALLBACK std_read(void* ud, uint8_t* buf, size_t size)
+	{
+		return std::fread(buf, 1, size, static_cast<FILE*>(ud));
+	}
+
+	int64_t IMGLOAD_CALLBACK std_seek(void* ud, int64_t offset, int whence)
+	{
+		std::fseek(static_cast<FILE*>(ud), static_cast<long>(offset), whence);
+		return static_cast<int64_t>(std::ftell(static_cast<FILE*>(ud)));
+	}
+
+	//same as above exept for files
+	bool load_image(ImgloadImage* img, const char* name){
+		FILE* f = std::fopen(name, "rb");
+
+		if (f == nullptr)
+		{
+			return false;
+		}
+
+		ImgloadIO io;
+		io.read = std_read;
+		io.seek = std_seek;
+
+		return load_from_io(img, &io, f);
+	}
+
+
+
+	GLuint bind_imgload_image(ImgloadImage img)
+	{
+		if (imgload_image_transform_data(img, IMGLOAD_FORMAT_R8G8B8A8, 255) != IMGLOAD_ERR_NO_ERROR)
+		{
+			return 0;
+		}
+
+		ImgloadImageData data;
+		if (imgload_image_data(img, 0, 0, &data) != IMGLOAD_ERR_NO_ERROR)
+		{
+			return 0;
+		}
+
+		GLuint tex_id;
+		glGenTextures(1, &tex_id);
+
+		if (tex_id == 0)
+		{
+			return 0;
+		}
+
+		glBindTexture(GL_TEXTURE_2D, tex_id);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+		glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+		glPixelStorei(GL_UNPACK_SWAP_BYTES, GL_FALSE);
+
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei) data.width, (GLsizei) data.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data);
+
+		return tex_id;
+	}
 }
 // ****************************************************************************************************************
 // Texture Control code members
@@ -220,27 +334,16 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 	textures.resize(pf.GetTexturesCount());
 	texturenames.resize(pf.GetTexturesCount());
 
-	ilutRenderer(ILUT_OPENGL); // call this here to make sure it's called AFTER openGL init
-	//int RetVal;
-
-
 	// done
 
 	// Load our insignia image.
-	ILuint ImageName;
-	ilGenImages(1, &ImageName);
-	ilBindImage(ImageName);
-
-	if (load(IL_PNG, insignia_png, sizeof(insignia_png)))
+	ImgloadImage img;
+	if (load(&img, insignia_png, sizeof(insignia_png)))
 	{
-		ILinfo imginfo;
-		iluGetImageInfo(&imginfo);
-		iluFlipImage();
-		float sz = (imginfo.Width > imginfo.Height)?imginfo.Width:imginfo.Height;
-		iluScale(sz, sz, imginfo.Depth);
-		ilutGLBindTexImage();
+		bind_imgload_image(img);
+
+		imgload_image_free(img);
 	}
-	ilDeleteImages(1, &ImageName);
 
 	unsigned int i;
 	std::string fname;
@@ -255,7 +358,7 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 	normal_lists.resize(paths.size()*2);
 	std::string root;
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 	ofstream texture_log("pcs2_txtsrch_log.txt");
 #endif
 	// setup file paths/get lists
@@ -274,7 +377,7 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 #endif
 			normal_lists[i*2].GetList(paths[i], "*");
 			
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << paths[i] << " Files" << endl;
 #endif
 
@@ -283,14 +386,14 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 				//vplists[i+1].GetList(fname, "*.vp");
 				normal_lists[(i*2)+1].GetList(fname, "*");	
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << fname << " Files" << endl;
 #endif
 			}
 
 			vplists[i].GetList(paths[i], "*.vp");
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << paths[i] << " VPs" << endl;
 #endif
 		}
@@ -309,7 +412,7 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 		prog_msgngr->setMessage(strtemp);
 		prog_msgngr->Notify();
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 		textures[i].texture = LoadTexture(texturenames[i], textures[i].texname, paths, vplists, normal_lists, texture_log);
 
 		prog_msgngr->incrementWithMessage(strtemp + "-shine");
@@ -333,15 +436,15 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 	//delete texture;
 
 	// list ALL files inside filelists
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 	for (i = 0; i < paths.size(); i++)
 	{
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 		texture_log << "############## Path #" << i << "##############" << endl;
 #endif
 		if (paths[i].length())
 		{
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "+++Dir: " << normal_lists[i*2].getDir() << endl;
 #endif
 			for (int j=0; j < normal_lists[i*2].Size(); j++)
@@ -349,7 +452,7 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 				texture_log << normal_lists[i*2].getDir() + normal_lists[i*2][j] << endl;
 			}
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "+++Dir: " << normal_lists[(i*2)+1].getDir() << endl;
 #endif
 			for (int j=0; j < normal_lists[(i*2)+1].Size(); j++)
@@ -357,7 +460,7 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 				texture_log << normal_lists[(i*2)+1].getDir() + normal_lists[(i*2)+1][j] << endl;
 			}
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "+++VPs: " << vplists[i].getDir() << endl;
 #endif
 			for (int j=0; j < vplists[i].Size(); j++)
@@ -365,7 +468,7 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 				texture_log << vplists[i].getDir() + vplists[i][j] << endl;
 			}
 		}
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 		texture_log << endl;
 #endif
 	}
@@ -399,7 +502,7 @@ GLuint TextureControl::TextureTranslate(int texnum, Texture_Type type)
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 GLuint TextureControl::LoadTexture(std::string texname,
 								   std::string &rfname, //real file name
 								   const std::vector<std::string> &paths, 
@@ -418,33 +521,28 @@ GLuint TextureControl::LoadTexture(std::string texname,
 
 	int num_exts = 7;
 	const char *extensions[] = { ".pcx", ".dds", ".jpg", ".png", ".tga", ".gif", ".bmp" };
-	ILenum type_codes[] = { IL_PCX, IL_DDS , IL_JPG, IL_PNG, IL_TGA, IL_GIF, IL_BMP };
 
-	float sz;
-	bool found;
+	bool foundInDir;
 	std::string tempstr;
-	ILinfo imginfo;
 	std::string fname, lcase;
-	ILenum img_type;
 	int filenum;
 	size_t curvp;
 
 	size_t size;
 	boost::scoped_array<char> buffer;
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 	texture_log << "-------- Searching for texture: " << texname << " --------" << endl;
 #endif
-	found = false;
-	for (unsigned int j = 0; j < paths.size() && !found; j++)
+	foundInDir = false;
+	for (unsigned int j = 0; j < paths.size() && !foundInDir; j++)
 	{
-		img_type = IL_TYPE_UNKNOWN;
-
+		foundInDir = false;
 		// search root then /data/maps
 
-		for (int l = 0; l <= 1 && img_type == IL_TYPE_UNKNOWN; l++)
+		for (int l = 0; l <= 1 && !foundInDir; l++)
 		{
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "Searching Dir: " << normal_lists[(j*2)+l].getDir() << endl;;
 #endif
 			filenum = FileList::new_search;
@@ -453,7 +551,7 @@ GLuint TextureControl::LoadTexture(std::string texname,
 
 				if (filenum != -1)
 				{
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 					texture_log << "File matched: " << (normal_lists[(j*2)+l].getDir() + normal_lists[(j*2)+l][filenum]);
 #endif
 
@@ -466,33 +564,32 @@ GLuint TextureControl::LoadTexture(std::string texname,
 							texId = LoadFile(fname);
 							if (texId != -1 && texId != 0)
 							{
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 								texture_log << " (Accepted)";
 #endif
 								rfname = fname;
 								wxString temp(rfname.c_str(), wxConvUTF8);
 								temp.Replace(_(".\\"),wxGetCwd()+_("\\"));
 								rfname = temp.mb_str();
-								img_type = type_codes[k];
-								found = true;
+								foundInDir = true;
 							}
 						} //if (strstr(lcase.c_str(), extensions[k]))
 					} // for (int k = 0; k < num_exts; k++)
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 					texture_log << endl;
 #endif
 
 				} //if (filenum != -1)
-			} while (img_type == IL_TYPE_UNKNOWN && filenum != -1);
+			} while (!foundInDir && filenum != -1);
 		} //for (int l = 0; l <= 1 && img_type == IL_TYPE_UNKNOWN; l++)
 
 
 		// search VPs in root
-		
-		if (img_type == IL_TYPE_UNKNOWN && !found)
+
+		bool foundInVP = false;
+		if (!foundInDir)
 		{
 			filenum = FileList::new_search;
-			img_type = IL_TYPE_UNKNOWN;
 			buffer.reset(NULL);
 			fname = texname;
 			curvp = 0; // curvp is used for resuming search
@@ -502,7 +599,7 @@ GLuint TextureControl::LoadTexture(std::string texname,
 
 				if (filenum != -1)
 				{
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 					texture_log << "VP matched: " << fname;
 #endif
 					lcase = strLower(fname);
@@ -510,60 +607,44 @@ GLuint TextureControl::LoadTexture(std::string texname,
 					{
 						if (strstr(lcase.c_str(), extensions[k]))
 						{
-							img_type = type_codes[k];
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+							foundInVP = true;
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 							texture_log << " (Accepted)";
 #endif
 							break;
 						}
 					}
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 					texture_log << endl;
 #endif
 				}
 				
-				if (img_type == IL_TYPE_UNKNOWN && buffer.get())
+				if (!foundInVP && buffer.get())
 				{
 					rfname = "";
 					buffer.reset(NULL);
 					fname=texname;
 				}
 
-			} while (img_type == IL_TYPE_UNKNOWN && filenum != -1);				
+			} while (!foundInVP && filenum != -1);
 		}
 
 
-		if (img_type != IL_TYPE_UNKNOWN && !found)
+		if (foundInVP)
 		{
-			ILuint ImageName; // The image name to return.
-			ilGenImages(1, &ImageName);
-			ilBindImage(ImageName);
-
-			
-
-			if (load(img_type, buffer.get(), (int)size))
+			ImgloadImage img;
+			if (load(&img, buffer.get(), size))
 			{
-				iluGetImageInfo(&imginfo);
-				iluFlipImage();
-				sz = (imginfo.Width > imginfo.Height)?imginfo.Width:imginfo.Height;
-				iluScale(sz, sz, imginfo.Depth);
-				texId = ilutGLBindTexImage();
+				texId = bind_imgload_image(img);
 
-				//write file to disk for debug purposes
-				//ofstream out(fname.c_str());
-				//out.write(buffer, size);
-				//out.close();
-
-				if (texId != -1 && texId != 0)
-				 found = true;
+				imgload_image_free(img);
 			}
-			ilDeleteImages(1, &ImageName);
 
 			buffer.reset(NULL);
 		}
 	}
 
-#if defined(_DEBUG) && defined(_ENABLE_TEXTUREPATH_DEBUG_)
+#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 	texture_log << endl;
 #endif
 	return texId;
@@ -626,23 +707,14 @@ GLuint LoadFile(std::string Filename)
 	//OpenGL_TextureID = ilutGLLoadImage((char *const)Filename.c_str());
 	//Status = (OpenGL_TextureID != 0);
 	GLuint OpenGL_TextureID = 0xFFFFFFFF;
-	ILuint ImgId;										// The Image Name
-	ILinfo imginfo;
-	float sz;
+	ImgloadImage img;
+	if (load_image(&img, Filename.c_str()))
+	{
+		OpenGL_TextureID = bind_imgload_image(img);
 
-	ilGenImages(1, &ImgId);								// Generate Image Name
-	ilBindImage(ImgId);									// Bind Image Name to Be Current
-	if (load_image((char *const)Filename.c_str())) {				// Load the Bitmap and Check for Errors
-		iluGetImageInfo(&imginfo);
-		iluFlipImage();
-		sz = (imginfo.Width > imginfo.Height)?imginfo.Width:imginfo.Height;
-		iluScale(sz, sz, imginfo.Depth);
-
-		OpenGL_TextureID = ilutGLBindTexImage();					// Send the Image to OpenGL
+		imgload_image_free(img);
 	}
-	//else
-	//f	TexNum = ilGetError();				// just some test shiat
-	ilDeleteImages(1, &ImgId);						// Delete the Image Name, As GL Has a Copy
+
 	return OpenGL_TextureID;
 
 

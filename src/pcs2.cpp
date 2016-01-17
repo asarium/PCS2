@@ -327,12 +327,10 @@
 #include <wx/splash.h>
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
+#include <imageloader.h>
 
 #include "main_panel.h"
 
-#include <IL/il.h>
-#include <IL/ilu.h>
-#include <IL/ilut.h>
 // globals are lazy, but just about the only tenable manner
 std::vector<file_context> model_files;
 int current_model_file;
@@ -434,6 +432,15 @@ std::string get_turret_name(int idx){
 //*******************************************************************************
 void set_editor_colors();
 
+static void* IMGLOAD_CALLBACK img_realloc(void*, void* mem, size_t size)
+{
+	return std::realloc(mem, size);
+}
+static void IMGLOAD_CALLBACK img_free(void*, void* mem)
+{
+	return std::free(mem);
+}
+
 bool PCS2_App::OnInit()
 {
 	/*
@@ -446,13 +453,16 @@ bool PCS2_App::OnInit()
 
 	myframe = NULL;
 
-	// Iinitialize OpenIL
-	ilInit();
-	iluInit();
+	// Iinitialize imageloader
+	ImgloadMemoryAllocator alloc;
+	alloc.realloc = img_realloc;
+	alloc.free = img_free;
 
-	//this causes DevIL to load TGAs and some others as expected
-	ilEnable(IL_ORIGIN_SET); 
-	ilOriginFunc(IL_ORIGIN_UPPER_LEFT); 
+	auto err = imgload_context_init(&m_imgload_ctx, IMGLOAD_CONTEXT_FLIP_IMAGES, &alloc, nullptr);
+	if (err != IMGLOAD_ERR_NO_ERROR)
+	{
+		return false;
+	}
 
 	//wxConfigBase::Set();
 	// get all image handlers we need
@@ -563,7 +573,12 @@ bool PCS2_App::OnInit()
 
 int PCS2_App::OnExit()
 {
-	ilShutDown();
+	if (m_imgload_ctx)
+	{
+		imgload_context_free(m_imgload_ctx);
+		m_imgload_ctx = nullptr;
+	}
+
 	delete wxConfigBase::Set((wxConfigBase *) NULL);
 	//delete config;
 

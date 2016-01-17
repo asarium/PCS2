@@ -121,7 +121,7 @@ target_include_directories(pcs2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/pugixml")
 target_include_directories(pcs2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../res")
 target_compile_features(pcs2 PRIVATE cxx_auto_type)
 
-target_link_libraries(pcs2 PRIVATE compiler platform)
+target_link_libraries(pcs2 PRIVATE compiler platform imageloader)
 
 
 find_package(OpenGL REQUIRED)
@@ -140,13 +140,6 @@ find_package(Boost REQUIRED COMPONENTS system filesystem regex)
 
 target_link_libraries(pcs2 PRIVATE ${Boost_LIBRARIES})
 target_include_directories(pcs2 PRIVATE ${Boost_INCLUDE_DIRS})
-
-
-find_package(DevIL REQUIRED)
-
-target_link_libraries(pcs2 PRIVATE ${IL_LIBRARIES} ${ILU_LIBRARIES} ${ILUT_LIBRARIES})
-target_include_directories(pcs2 PRIVATE ${IL_INCLUDE_DIR})
-target_compile_definitions(pcs2 PRIVATE ILUT_USE_OPENGL)
 
 if(WIN32)
 else()

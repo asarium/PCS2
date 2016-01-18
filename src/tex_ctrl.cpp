@@ -259,7 +259,11 @@ namespace
 		io.read = std_read;
 		io.seek = std_seek;
 
-		return load_from_io(img, &io, f);
+		auto res = load_from_io(img, &io, f);
+
+		std::fclose(f);
+
+		return res;
 	}
 
 
@@ -439,38 +443,28 @@ void TextureControl::LoadTextures(PCS_Model &pf, std::vector<std::string> &paths
 #if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 	for (i = 0; i < paths.size(); i++)
 	{
-#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 		texture_log << "############## Path #" << i << "##############" << endl;
-#endif
 		if (paths[i].length())
 		{
-#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "+++Dir: " << normal_lists[i*2].getDir() << endl;
-#endif
-			for (int j=0; j < normal_lists[i*2].Size(); j++)
+			for (size_t j=0; j < normal_lists[i*2].Size(); j++)
 			{
-				texture_log << normal_lists[i*2].getDir() + normal_lists[i*2][j] << endl;
+				texture_log << normal_lists[i*2].getDir() << normal_lists[i*2][j] << endl;
 			}
 
-#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "+++Dir: " << normal_lists[(i*2)+1].getDir() << endl;
-#endif
-			for (int j=0; j < normal_lists[(i*2)+1].Size(); j++)
+			for (size_t j=0; j < normal_lists[(i*2)+1].Size(); j++)
 			{
-				texture_log << normal_lists[(i*2)+1].getDir() + normal_lists[(i*2)+1][j] << endl;
+				texture_log << normal_lists[(i*2)+1].getDir() << normal_lists[(i*2)+1][j] << endl;
 			}
 
-#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 			texture_log << "+++VPs: " << vplists[i].getDir() << endl;
-#endif
-			for (int j=0; j < vplists[i].Size(); j++)
+			for (size_t j=0; j < vplists[i].Size(); j++)
 			{
-				texture_log << vplists[i].getDir() + vplists[i][j] << endl;
+				texture_log << vplists[i].getDir() << vplists[i][j] << endl;
 			}
 		}
-#if defined(_ENABLE_TEXTUREPATH_DEBUG_)
 		texture_log << endl;
-#endif
 	}
 #endif
 

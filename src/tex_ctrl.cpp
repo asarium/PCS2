@@ -151,6 +151,8 @@
 
 #include "GLee.h"
 
+#include <algorithm>
+
 using namespace std;
 
 namespace
